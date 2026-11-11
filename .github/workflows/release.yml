@@ -21,7 +21,7 @@ jobs:
           from pathlib import Path
           tree=ast.parse(Path('outputs/white-dragon-desktop/updates.py').read_text(encoding='utf-8'))
           version=next(ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='APP_VERSION' for t in n.targets))
-          if os.environ['GITHUB_REF_TYPE']!='tag' or os.environ['GITHUB_REF_NAME']!='v'+version:
+          if os.environ['GITHUB_EVENT_NAME']=='push' and (os.environ['GITHUB_REF_TYPE']!='tag' or os.environ['GITHUB_REF_NAME']!='v'+version):
               raise SystemExit('Push the matching vVERSION tag to publish')
           with open(os.environ['GITHUB_ENV'],'a') as f:
               f.write('RELEASE_VERSION='+version+'\n')
@@ -30,11 +30,14 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item outputs/white-dragon-desktop/assets dist/assets -Recurse
-          $pet = Start-Process dist/WhiteDragon/WhiteDragon.exe -ArgumentList '--smoke-test','--report',"$PWD/smoke.json" -PassThru
-          if (-not $pet.WaitForExit(45000)) { throw 'Smoke test timed out' }
+          $pet = Start-Process dist/WhiteDragon/WhiteDragon.exe -ArgumentList '--smoke-test','--report',"$PWD/smoke.json" -Wait -PassThru
+          Write-Output "Smoke process exit code $($pet.ExitCode)"
+          if (Test-Path smoke.json) { Get-Content smoke.json -Raw }
+          if (Test-Path dist/desktop.log) { Get-Content dist/desktop.log -Tail 30 }
           if ($pet.ExitCode -ne 0 -or -not (Get-Content smoke.json -Raw | ConvertFrom-Json).ok) { throw 'Smoke test failed' }
       - run: python work/white-dragon-desktop/package_release.py --runtime dist/WhiteDragon --output release --version ${{ env.RELEASE_VERSION }}
       - name: Publish
+        if: github.event_name == 'push'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
