@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+release/
+settings.json
+test-settings.json
+update-settings.json
+update-state.json
+*.log
+.desktop-*
+.codex-watcher-*
+backups/
+_internal/
+*.exe

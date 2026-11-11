@@ -1,0 +1,58 @@
+{
+  "schema": 2,
+  "animation_version": 2,
+  "methodology": "Approved portrait with rigid transforms; continuous video frames can replace states. No optical flow, morphing or synthetic blinking.",
+  "states": {
+    "idle": {
+      "mode": "continuous",
+      "frames": 117,
+      "fps": 24.0,
+      "duration": 4.875,
+      "loop": true,
+      "width": 576,
+      "height": 672,
+      "columns": 4,
+      "chunk_size": 16,
+      "chunks": [
+        "continuous/idle-c615eca589ef/idle-c615eca589ef-000.webp",
+        "continuous/idle-c615eca589ef/idle-c615eca589ef-001.webp",
+        "continuous/idle-c615eca589ef/idle-c615eca589ef-002.webp",
+        "continuous/idle-c615eca589ef/idle-c615eca589ef-003.webp",
+        "continuous/idle-c615eca589ef/idle-c615eca589ef-004.webp",
+        "continuous/idle-c615eca589ef/idle-c615eca589ef-005.webp",
+        "continuous/idle-c615eca589ef/idle-c615eca589ef-006.webp",
+        "continuous/idle-c615eca589ef/idle-c615eca589ef-007.webp"
+      ],
+      "label": "待机 · 连续视频",
+      "source_sha256": "7bb8d38625725a64d7f3167bdb377718cd2c8b74fba15c948fdd5f82aa5a6ab9"
+    },
+    "waving": {
+      "mode": "portrait",
+      "frames": 1,
+      "duration": 1.4,
+      "loop": false,
+      "label": "轻摆回应"
+    },
+    "jumping": {
+      "mode": "portrait",
+      "frames": 1,
+      "duration": 1.1,
+      "loop": false,
+      "label": "轻跳"
+    },
+    "running-right": {
+      "mode": "portrait",
+      "frames": 1,
+      "duration": 1.0,
+      "loop": true,
+      "label": "向右倾斜"
+    },
+    "running-left": {
+      "mode": "portrait",
+      "frames": 1,
+      "duration": 1.0,
+      "loop": true,
+      "label": "向左倾斜"
+    }
+  }
+}

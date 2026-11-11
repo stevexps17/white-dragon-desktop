@@ -1,0 +1,44 @@
+name: Windows release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Validate version
+        shell: python
+        run: |
+          import ast, os
+          from pathlib import Path
+          tree=ast.parse(Path('outputs/white-dragon-desktop/updates.py').read_text(encoding='utf-8'))
+          version=next(ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='APP_VERSION' for t in n.targets))
+          if os.environ['GITHUB_REF_TYPE']!='tag' or os.environ['GITHUB_REF_NAME']!='v'+version:
+              raise SystemExit('Push the matching vVERSION tag to publish')
+          with open(os.environ['GITHUB_ENV'],'a') as f:
+              f.write('RELEASE_VERSION='+version+'\n')
+      - run: python -m PyInstaller --noconfirm --distpath dist --workpath build work/white-dragon-desktop/WhiteDragon.spec
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          Copy-Item outputs/white-dragon-desktop/assets dist/assets -Recurse
+          $pet = Start-Process dist/WhiteDragon/WhiteDragon.exe -ArgumentList '--smoke-test','--report',"$PWD/smoke.json" -PassThru
+          if (-not $pet.WaitForExit(45000)) { throw 'Smoke test timed out' }
+          if ($pet.ExitCode -ne 0 -or -not (Get-Content smoke.json -Raw | ConvertFrom-Json).ok) { throw 'Smoke test failed' }
+      - run: python work/white-dragon-desktop/package_release.py --runtime dist/WhiteDragon --output release --version ${{ env.RELEASE_VERSION }}
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:GITHUB_REF_NAME *> $null
+          if ($LASTEXITCODE -eq 0) { Write-Output 'Release already published'; exit 0 }
+          gh release create $env:GITHUB_REF_NAME release/* --verify-tag --title "小白龙 $env:RELEASE_VERSION" --notes-file CHANGELOG.md
