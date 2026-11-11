@@ -26,7 +26,7 @@ jobs:
           with open(os.environ['GITHUB_ENV'],'a') as f:
               f.write('RELEASE_VERSION='+version+'\n')
       - run: python -m PyInstaller --noconfirm --distpath dist --workpath build work/white-dragon-desktop/WhiteDragon.spec
-      - name: Smoke test
+      - name: Validate packaged UI
         timeout-minutes: 2
         env:
           QT_QPA_PLATFORM: offscreen
@@ -37,8 +37,28 @@ jobs:
           Write-Output "Smoke process exit code $($pet.ExitCode)"
           if (Test-Path smoke.json) { Get-Content smoke.json -Raw }
           if (Test-Path dist/desktop.log) { Get-Content dist/desktop.log -Tail 30 }
-          if ($pet.ExitCode -ne 0 -or -not (Get-Content smoke.json -Raw | ConvertFrom-Json).ok) { throw 'Smoke test failed' }
+          $report = Get-Content smoke.json -Raw | ConvertFrom-Json
+          # Hosted Windows disables system animations. Verify one paint per
+          # state here; display refresh performance is tested on a real desktop.
+          $states = @($report.assets.PSObject.Properties)
+          $badAssets = @($states | Where-Object { -not $_.Value.loaded })
+          $badFlags = @($report.flags.PSObject.Properties | Where-Object { -not $_.Value })
+          if ($pet.ExitCode -ne 0 -or $badAssets.Count -or $badFlags.Count -or $report.errors.Count -or $report.paint_events -lt $states.Count) { throw 'Packaged UI validation failed' }
       - run: python work/white-dragon-desktop/package_release.py --runtime dist/WhiteDragon --output release --version ${{ env.RELEASE_VERSION }}
+      - name: Validate complete release package
+        timeout-minutes: 2
+        shell: python
+        run: |
+          import json, os, subprocess, zipfile
+          from pathlib import Path
+          version=os.environ['RELEASE_VERSION']
+          with zipfile.ZipFile(f'release/WhiteDragon-v{version}-windows-x64.zip') as archive:
+              archive.extractall('verification')
+          env=dict(os.environ,QT_QPA_PLATFORM='offscreen')
+          subprocess.run(['verification/WhiteDragon/WhiteDragon.exe','--update-health-check',str(Path('health.json').resolve())],env=env,timeout=45,check=True)
+          report=json.loads(Path('health.json').read_text(encoding='utf-8'))
+          if not report['ok'] or report['version']!=version:
+              raise SystemExit('Release manifest or image decoding failed')
       - name: Publish
         if: github.event_name == 'push'
         shell: pwsh
