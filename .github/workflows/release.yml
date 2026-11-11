@@ -27,6 +27,9 @@ jobs:
               f.write('RELEASE_VERSION='+version+'\n')
       - run: python -m PyInstaller --noconfirm --distpath dist --workpath build work/white-dragon-desktop/WhiteDragon.spec
       - name: Smoke test
+        timeout-minutes: 2
+        env:
+          QT_QPA_PLATFORM: offscreen
         shell: pwsh
         run: |
           Copy-Item outputs/white-dragon-desktop/assets dist/assets -Recurse
