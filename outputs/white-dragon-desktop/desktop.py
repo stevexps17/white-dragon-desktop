@@ -39,7 +39,25 @@ def portrait_motion(state,elapsed):
     if state in ('running-left','running-right'):
         direction=-1 if state=='running-left' else 1
         return 0.,-2.,direction*2.5
+    if state=='running':
+        return 0.,-2.,1.2*math.sin(2*math.pi*elapsed/2.8)
+    if state=='waiting':
+        return 0.,0.,-2.2
+    if state=='success':
+        u=min(1.,elapsed/1.4)
+        return 0.,-17.*math.sin(math.pi*u)**2,2.*math.sin(2*math.pi*u)
+    if state=='failed':
+        u=min(1.,elapsed/1.6)
+        return 0.,3.*math.sin(math.pi*u)**2,-3.*math.sin(math.pi*u)**2
     return 0.,0.,0.
+
+def nearest_work_area(areas,point):
+    """Select the closest available work area; preserve screen ordering on ties."""
+    def distance(rect):
+        dx=max(rect.left()-point.x(),0,point.x()-rect.right())
+        dy=max(rect.top()-point.y(),0,point.y()-rect.bottom())
+        return dx*dx+dy*dy
+    return min(areas,key=distance)
 
 def desktop_scope():
     """Single-instance ownership must not cross Windows desktop boundaries."""
@@ -86,7 +104,7 @@ class Dragon(QWidget):
         saved_canvas_y=self.settings.get('y',screen.bottom()-self.height()-25+self.canvas_top)
         self.move(int(self.settings.get('x',screen.right()-self.width()-40)),int(saved_canvas_y)-self.canvas_top)
         self.keep_on_screen()
-        self.timer=QTimer(self);self.timer.setTimerType(Qt.TimerType.PreciseTimer);self.timer.timeout.connect(self.tick);self.timer.start(round(1000/self.fps))
+        self.timer=QTimer(self);self.timer.setTimerType(Qt.TimerType.PreciseTimer);self.timer.timeout.connect(self.tick)
         self.click_timer=QTimer(self);self.click_timer.setSingleShot(True);self.click_timer.timeout.connect(lambda:self.interaction_play('waving'))
         self.auto_timer=QTimer(self);self.auto_timer.timeout.connect(self.auto_action);self.auto_timer.start(35000)
         self.tray=QSystemTrayIcon(QIcon(str(ASSETS/'portrait.png')),self)
@@ -99,6 +117,40 @@ class Dragon(QWidget):
             from update_ui import UpdateController
             self.updates=UpdateController(self,BASE,desktop_scope())
         self.motion_timer=QTimer(self);self.motion_timer.timeout.connect(self.refresh_motion);self.motion_timer.start(5000)
+        app=QApplication.instance()
+        app.screenAdded.connect(self.watch_screen);app.screenRemoved.connect(self.screen_removed)
+        for screen in app.screens():self.watch_screen(screen)
+        self.update_render_timer()
+
+    def watch_screen(self,screen):
+        screen.availableGeometryChanged.connect(self.recover_position)
+
+    def screen_removed(self,_screen):
+        QTimer.singleShot(0,self.recover_position)
+
+    def recover_position(self,_geometry=None):
+        old=self.pos()
+        self.keep_on_screen()
+        if old!=self.pos():self.save()
+
+    def update_render_timer(self):
+        entry=self.manifest['states'][self.state]
+        if not self.isVisible() or self.paused or self.os_reduced or self.portrait_mode:
+            self.timer.stop()
+            return
+        # Idle's frames are already baked; only transforms benefit from more refreshes.
+        rate=min(self.fps,entry['fps']) if self.state=='idle' and entry['mode']=='continuous' else self.fps
+        interval=max(1,round(1000/rate))
+        if not self.timer.isActive() or self.timer.interval()!=interval:
+            self.timer.start(interval)
+
+    def showEvent(self,event):
+        super().showEvent(event)
+        if hasattr(self,'timer'):self.update_render_timer()
+
+    def hideEvent(self,event):
+        super().hideEvent(event)
+        if hasattr(self,'timer'):self.update_render_timer()
 
     def status_animation(self):
         state={'running':'running','needs_input':'waiting','ready':'success','blocked':'failed'}.get(self.codex_status,'idle')
@@ -106,7 +158,7 @@ class Dragon(QWidget):
 
     def refresh_motion(self):
         value=reduced_motion()
-        if value!=self.os_reduced:self.os_reduced=value;self.update()
+        if value!=self.os_reduced:self.os_reduced=value;self.update_render_timer();self.update()
 
     def position_panel(self):
         if self.panel is not None:
@@ -159,7 +211,7 @@ class Dragon(QWidget):
         if state not in self.manifest['states']:return
         if self.paused:self.media_started=time.perf_counter()-self.media_pause_elapsed
         self.motion_from=self.motion_offset
-        self.load_state(state);self.state=state;self.started=time.perf_counter();self.pause_elapsed=0;self.paused=False;self.portrait_mode=False;self.update()
+        self.load_state(state);self.state=state;self.started=time.perf_counter();self.pause_elapsed=0;self.paused=False;self.portrait_mode=False;self.update_render_timer();self.update()
 
     def interaction_play(self,state):
         # Moving/clicking a paused or static pet never changes that preference.
@@ -240,16 +292,18 @@ class Dragon(QWidget):
 
     def keep_on_screen(self):
         screens=QApplication.screens();point=self.pos()+QPoint(self.width()//2,self.height()//2)
-        screen=next((s for s in screens if s.availableGeometry().contains(point)),QApplication.primaryScreen()).availableGeometry()
+        if not screens:return
+        screen=nearest_work_area([s.availableGeometry() for s in screens],point)
         self.move(max(screen.left(),min(self.x(),screen.right()-self.width()+1)),max(screen.top(),min(self.y(),screen.bottom()-self.height()+1)))
 
     def toggle_pause(self):
         if self.paused:
             self.started=time.perf_counter()-self.pause_elapsed;self.media_started=time.perf_counter()-self.media_pause_elapsed;self.paused=False
         else:self.pause_elapsed=self.elapsed();self.media_pause_elapsed=self.media_elapsed();self.paused=True
+        self.update_render_timer()
 
-    def set_fps(self,fps):self.fps=fps;self.timer.setInterval(round(1000/fps));self.save()
-    def toggle_portrait(self):self.portrait_mode=not self.portrait_mode;self.save();self.update()
+    def set_fps(self,fps):self.fps=fps;self.update_render_timer();self.save()
+    def toggle_portrait(self):self.portrait_mode=not self.portrait_mode;self.update_render_timer();self.save();self.update()
     def toggle_auto(self):self.autoplay=not self.autoplay;self.save()
     def toggle_notifications(self):self.notifications=not self.notifications;self.save()
     def toggle_startup(self):
@@ -279,7 +333,7 @@ class Dragon(QWidget):
 
     def menu(self):
         menu=QMenu();menu.setStyleSheet('QMenu{font-family:Microsoft YaHei UI;font-size:13px;padding:5px;}QMenu::item{padding:6px 24px;}')
-        title=menu.addAction('小白龙 · Codex 联动版');title.setEnabled(False);menu.addSeparator()
+        title=menu.addAction('小白龙 · Codex 联动版' if self.integration else '小白龙 · 独立模式');title.setEnabled(False);menu.addSeparator()
         if self.panel is not None:
             menu.addAction('Codex 活动列表',self.panel.show_tasks)
             menu.addAction('新聊天草稿 · Ctrl+Alt+Shift+P',self.panel.show_composer)
@@ -326,6 +380,7 @@ class Dragon(QWidget):
         self.cleaned=True
         if self.panel is not None:self.panel.stop()
         if self.updates is not None:self.updates.stop()
+        self.timer.stop();self.auto_timer.stop();self.click_timer.stop();self.motion_timer.stop()
         self.decoder.shutdown(wait=False,cancel_futures=True)
         self.save();self.tray.hide()
     def closeEvent(self,event):
@@ -333,7 +388,7 @@ class Dragon(QWidget):
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--quit',action='store_true');parser.add_argument('--smoke-test',action='store_true');parser.add_argument('--managed',action='store_true');parser.add_argument('--watch-codex',action='store_true');parser.add_argument('--bridge-check',action='store_true');parser.add_argument('--snapshot');parser.add_argument('--report');parser.add_argument('--update-health-check',type=Path);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--quit',action='store_true');parser.add_argument('--smoke-test',action='store_true');parser.add_argument('--managed',action='store_true');parser.add_argument('--standalone',action='store_true',help='Run the pet without Codex or update checks');parser.add_argument('--watch-codex',action='store_true');parser.add_argument('--bridge-check',action='store_true');parser.add_argument('--snapshot');parser.add_argument('--report');parser.add_argument('--update-health-check',type=Path);args=parser.parse_args()
     logging.basicConfig(filename=str(BASE/'desktop.log'),level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s')
     if args.update_health_check:
         from updates import installed_health
@@ -361,31 +416,34 @@ def main():
         if args.quit:instance_lock.unlock();return 0
     manifest=json.loads((ASSETS/'manifest.json').read_text(encoding='utf-8'))
     settings=BASE/('test-settings.json' if args.smoke_test else 'settings.json')
-    dragon=Dragon(manifest,settings,integration=not args.smoke_test);dragon.managed_launch=args.managed;dragon.show()
+    integration=not (args.smoke_test or args.standalone)
+    dragon=Dragon(manifest,settings,integration=integration);dragon.managed_launch=args.managed and integration;dragon.show()
     if not args.smoke_test:
         from windows_link import follow_codex_exit
         QTimer.singleShot(120,dragon.show_pet)
-        dragon.codex_exit_timer=follow_codex_exit(dragon,dragon.close,managed=args.managed)
-        app.aboutToQuit.connect(dragon.codex_exit_timer.stop)
+        if integration:
+            dragon.codex_exit_timer=follow_codex_exit(dragon,dragon.close,managed=args.managed)
+            app.aboutToQuit.connect(dragon.codex_exit_timer.stop)
         def receive():
             if not control_path.exists():return
             try:
                 command=json.loads(control_path.read_text(encoding='utf-8'));control_path.unlink(missing_ok=True)
                 if abs(time.time()-command.get('at',0))>15:return
                 action=command.get('action')
-                if action=='quit' or (action=='quit-managed' and args.managed):dragon.close()
+                if action=='quit' or (action=='quit-managed' and dragon.managed_launch):dragon.close()
                 elif action=='show':dragon.show_pet()
             except (OSError,ValueError):logging.exception('Could not read local control command')
         dragon.control_timer=QTimer(dragon);dragon.control_timer.timeout.connect(receive);dragon.control_timer.start(250)
         app.aboutToQuit.connect(instance_lock.unlock)
     app.aboutToQuit.connect(dragon.cleanup)
     if args.smoke_test:
+        dragon.motion_timer.stop();dragon.os_reduced=False;dragon.update_render_timer()
         report={'assets':{},'flags':{'transparent':dragon.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground),'frameless':bool(dragon.windowFlags()&Qt.WindowType.FramelessWindowHint),'topmost':bool(dragon.windowFlags()&Qt.WindowType.WindowStaysOnTopHint)}}
         states=list(manifest['states']);start=time.perf_counter()
         def inspect_state(i=0):
             if i==len(states):
                 report['paint_events']=dragon.frames_painted;report['elapsed_seconds']=time.perf_counter()-start;report['errors']=dragon.errors
-                report['ok']=all(report['flags'].values()) and not dragon.errors and dragon.frames_painted>=15
+                report['ok']=all(report['flags'].values()) and not dragon.errors and all(v['loaded'] for v in report['assets'].values()) and dragon.frames_painted>=len(states)
                 if args.snapshot:dragon.grab().save(args.snapshot)
                 if args.report:Path(args.report).write_text(json.dumps(report,indent=2),encoding='utf-8')
                 dragon.close();app.quit();return

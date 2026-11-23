@@ -106,7 +106,11 @@ class UpdatesTests(unittest.TestCase):
         manifest['files']['assets/manifest.json']=u.sha256(source/'assets/manifest.json');u.atomic_json(source/'release.json',manifest)
         with self.assertRaises(u.UpdateError):u.validate_payload(source)
 
-    def test_local_source_and_extra_asset_guard(self):
+    # These are installed-package fixtures, not Git worktrees. Some hosted
+    # runners place temp dirs under managed .git markers; test_git_dirty_guard
+    # tests the actual Git detection independently.
+    @patch.object(u,'_git_guard',return_value=None)
+    def test_local_source_and_extra_asset_guard(self,_git_guard):
         base=self.root/'base';fixture(base);manifest=fixture(self.root/'new','1.1.0',b'new')
         (base/'settings.json').write_text('personal');(base/'desktop.log').write_text('local log');(base/'my-notes.md').write_text('unmanaged')
         u.guard_local_changes(base,manifest)
@@ -124,7 +128,8 @@ class UpdatesTests(unittest.TestCase):
         (base/'untracked.py').write_text('work in progress')
         with self.assertRaisesRegex(u.LocalChanges,'Git'):u.guard_local_changes(base,new)
 
-    def test_transaction_updates_source_assets_runtime_preserves_settings(self):
+    @patch.object(u,'_git_guard',return_value=None)
+    def test_transaction_updates_source_assets_runtime_preserves_settings(self,_git_guard):
         base=self.root/'base';old=fixture(base);stage=self.root/'payload';new=fixture(stage,'1.1.0',b'new')
         for name in ['settings.json','desktop.log','update-settings.json']:(base/name).write_text('personal')
         backup=u.apply_transaction(base,stage,new,health_check=lambda base,version:u.validate_payload(base,version,exact=False))
@@ -132,7 +137,8 @@ class UpdatesTests(unittest.TestCase):
         self.assertEqual((backup/'desktop.py').read_bytes(),b'old')
         self.assertTrue(all((base/name).read_text()=='personal' for name in ['settings.json','desktop.log','update-settings.json']))
 
-    def test_mid_transaction_failure_and_health_failure_roll_back_every_unit(self):
+    @patch.object(u,'_git_guard',return_value=None)
+    def test_mid_transaction_failure_and_health_failure_roll_back_every_unit(self,_git_guard):
         for mode in ['move','health']:
             base=self.root/('base-'+mode);old=fixture(base);stage=self.root/('stage-'+mode);new=fixture(stage,'1.1.0',b'new')
             def replace(source,target):

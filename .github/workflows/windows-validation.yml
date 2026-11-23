@@ -1,0 +1,131 @@
+name: Windows validation
+
+on:
+  push:
+    branches: ['review/white-dragon-*']
+  pull_request:
+
+# PRs (including forks) run only on an ephemeral hosted runner, without secrets,
+# write permissions, deployment environments, or release/tag operations.
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run updater unit tests
+        timeout-minutes: 5
+        # Explicit entrypoint: other test_*.py files are executable integration
+        # scripts, so broad unittest discovery would execute them on import.
+        run: python work/white-dragon-desktop/test_updates.py
+
+      - name: Run desktop and notification regression tests
+        timeout-minutes: 3
+        run: |
+          python work/white-dragon-desktop/test_bridge_notifications.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python work/white-dragon-desktop/test_bridge_notifications_qt.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python work/white-dragon-desktop/test_desktop_behavior.py
+
+      - name: Validate source UI and consent dialogs
+        timeout-minutes: 3
+        shell: python
+        run: |
+          import json, os, subprocess, sys
+          from pathlib import Path
+          import textwrap
+
+          # Shared validation for source and the extracted distributable.
+          # Hosted Windows may disable animations: require one paint per state,
+          # not the interactive desktop's frame-rate threshold.
+          helper = Path(os.environ['RUNNER_TEMP']) / 'validate_smoke.py'
+          helper.write_text(textwrap.dedent('''\
+          import json, os, subprocess
+          from pathlib import Path
+          def validate(command, report_path):
+              report_path = Path(report_path).resolve()
+              report_path.unlink(missing_ok=True)
+              subprocess.run([*command, '--smoke-test', '--report', str(report_path)],
+                             env=dict(os.environ, QT_QPA_PLATFORM='offscreen'),
+                             timeout=75, check=True)
+              report = json.loads(report_path.read_text(encoding='utf-8'))
+              print(json.dumps(report, ensure_ascii=False, indent=2))
+              expected = json.loads(Path('outputs/white-dragon-desktop/assets/manifest.json').read_text(encoding='utf-8'))['states']
+              states = report['assets']
+              required_flags = ('transparent', 'frameless', 'topmost')
+              if (report.get('ok') is not True or not expected or set(states) != set(expected)
+                      or not all(row.get('loaded') is True for row in states.values())
+                      or not all(report['flags'].get(key) is True for key in required_flags)
+                      or report['errors'] or report['paint_events'] < len(expected)):
+                  raise SystemExit('UI smoke validation failed')
+          '''), encoding='utf-8')
+          import runpy
+          runpy.run_path(str(helper))['validate'](
+              [sys.executable, 'outputs/white-dragon-desktop/desktop.py'], 'source-smoke.json')
+          subprocess.run([sys.executable, 'work/white-dragon-desktop/test_update_ui.py'],
+                         timeout=60, check=True)
+
+      - name: Build Windows runtime (validation only)
+        timeout-minutes: 12
+        run: python -m PyInstaller --noconfirm --distpath dist --workpath build work/white-dragon-desktop/WhiteDragon.spec
+
+      - name: Build and validate complete package locally
+        timeout-minutes: 4
+        shell: python
+        run: |
+          import ast, json, os, runpy, subprocess, sys, zipfile
+          from pathlib import Path
+          tree = ast.parse(Path('outputs/white-dragon-desktop/updates.py').read_text(encoding='utf-8'))
+          version = next(ast.literal_eval(node.value) for node in tree.body
+                         if isinstance(node, ast.Assign)
+                         and any(isinstance(target, ast.Name) and target.id == 'APP_VERSION' for target in node.targets))
+          # This creates local ZIP/checksum fixtures only. Nothing is published.
+          subprocess.run([sys.executable, 'work/white-dragon-desktop/package_release.py',
+                          '--runtime', 'dist/WhiteDragon', '--output', 'validation-package',
+                          '--version', version], timeout=90, check=True)
+          with zipfile.ZipFile(f'validation-package/WhiteDragon-v{version}-windows-x64.zip') as archive:
+              archive.extractall('validation-extracted')
+          executable = str(Path('validation-extracted/WhiteDragon/WhiteDragon.exe').resolve())
+          helper = Path(os.environ['RUNNER_TEMP']) / 'validate_smoke.py'
+          runpy.run_path(str(helper))['validate']([executable], 'packaged-smoke.json')
+          report_path = Path('packaged-health.json').resolve()
+          report_path.unlink(missing_ok=True)
+          subprocess.run([executable, '--update-health-check', str(report_path)],
+                         timeout=45, check=True)
+          report = json.loads(report_path.read_text(encoding='utf-8'))
+          print(json.dumps(report, ensure_ascii=False, indent=2))
+          if report.get('ok') is not True or report.get('version') != version:
+              raise SystemExit('Packaged manifest or image decoding failed')
+
+      - name: Save validation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-validation-reports
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            source-smoke.json
+            packaged-smoke.json
+            packaged-health.json
+            outputs/white-dragon-desktop/update-source-test-report.json
+            outputs/white-dragon-desktop/update-ui-test-report.json

@@ -53,6 +53,34 @@
       "duration": 1.0,
       "loop": true,
       "label": "向左倾斜"
+    },
+    "running": {
+      "mode": "portrait",
+      "frames": 1,
+      "duration": 2.8,
+      "loop": true,
+      "label": "工作 · 轻晃"
+    },
+    "waiting": {
+      "mode": "portrait",
+      "frames": 1,
+      "duration": 1,
+      "loop": true,
+      "label": "等待确认 · 侧倾"
+    },
+    "success": {
+      "mode": "portrait",
+      "frames": 1,
+      "duration": 1.4,
+      "loop": false,
+      "label": "完成 · 轻跃"
+    },
+    "failed": {
+      "mode": "portrait",
+      "frames": 1,
+      "duration": 1.6,
+      "loop": false,
+      "label": "受阻 · 下沉"
     }
   }
 }

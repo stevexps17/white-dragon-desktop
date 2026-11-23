@@ -10,7 +10,7 @@ Windows 透明桌面宠物，显示本机 Codex 聊天的中文任务进度，�
 
 ## 当前素材与功能
 
-待机使用连续视频的 117 帧，原生 24 FPS，窗口默认 60 FPS 刷新。挥手、轻跳、工作、等待、完成与受阻尚待合格独立素材，现有交互为整体运动反馈。任务文字、活动列表、提醒和聊天跳转已接入。
+待机使用连续视频的 117 帧，原生 24 FPS，待机刷新不超过素材帧率，交互动作仍可以 60 FPS 刷新。隐藏、暂停、静态显示或系统启用减少动态效果时停止动画刷新。点击和任务工作、待确认、完成、受阻使用小白龙现有素材的整体运动反馈，不是新逐帧动作。断连重连不会重复播报同一条提醒；多屏边界变化时，离屏桌宠回到最近可用工作区。任务文字、活动列表、提醒和聊天跳转已接入。
 
 任务读取使用本机 Codex 的 SQLite 和会话事件文件，属于版本相关适配。语音入口打开 Codex 聊天，使用原生麦克风。套餐额度显示尚待实现。
 
@@ -24,6 +24,8 @@ python outputs/white-dragon-desktop/desktop.py
 python -m PyInstaller --noconfirm --distpath dist --workpath build work/white-dragon-desktop/WhiteDragon.spec
 python work/white-dragon-desktop/package_release.py --runtime dist/WhiteDragon --output release --version 1.1.0
 ```
+
+只试跑桌宠时可执行 `python outputs/white-dragon-desktop/desktop.py --standalone`，不读取 Codex、不接管客户端退出，也不检查更新。Windows 发行包可执行 `WhiteDragon.exe --standalone`。独立模式和平常模式共用窗口实例及显示设置。Linux 云端仅用于源码和 Qt 离屏测试，不等同于 Windows 托盘、系统 DPI 或原生窗口验证。
 
 修改 updates.py 的 APP_VERSION 和 CHANGELOG.md，提交后推送相同版本的 v 标签。GitHub Actions 会构建 Windows 程序、验证基本运行并发布 ZIP 与校验文件。标签必须与版本常量一致。发布前应验证退出、状态栏及动画衔接。
 

@@ -87,7 +87,11 @@ class ActivityPanel(QFrame):
                 body=notices[0].title[:100] if len(notices)==1 else '\n'.join(LABELS[a.status]+' · '+a.title[:50] for a in notices[:3])+'\n点击查看全部提醒及对应聊天'
                 self.pet.tray.showMessage('小白龙 · '+title,body,self.pet.tray.MessageIcon.Information,6500)
         old_primary=self.pet.codex_activity_key
-        self.previous=current;self.pet.codex_activity_key=(primary.id,primary.status,primary.turn_id) if primary else None
+        # A failed scan/disconnect is not an observed task transition. Keep the
+        # last successful baseline so reconnecting cannot replay old reminders.
+        # Current controls still reflect the disconnected snapshot above.
+        if snapshot.connected:self.previous=current
+        self.pet.codex_activity_key=(primary.id,primary.status,primary.turn_id) if primary else None
         self.pet.codex_status=state
         self.presence.set_activity(bool(activities),changed=current!=previous)
         results=[a for a in activities if a.status in {'ready','blocked'}]
