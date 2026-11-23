@@ -140,15 +140,28 @@ class UpdatesTests(unittest.TestCase):
     @patch.object(u,'_git_guard',return_value=None)
     def test_mid_transaction_failure_and_health_failure_roll_back_every_unit(self,_git_guard):
         for mode in ['move','health']:
-            base=self.root/('base-'+mode);old=fixture(base);stage=self.root/('stage-'+mode);new=fixture(stage,'1.1.0',b'new')
-            def replace(source,target):
-                if mode=='move' and Path(source)==stage/'desktop.py':raise OSError('controlled replacement failure')
-                return os.replace(source,target)
-            def health(*_):
-                if mode=='health':raise u.UpdateError('controlled startup failure')
-            with self.assertRaisesRegex(u.UpdateError,'已回退'):u.apply_transaction(base,stage,new,health_check=health,replace=replace)
-            u.validate_payload(base,'1.0.9',exact=False)
-            self.assertEqual((base/'desktop.py').read_bytes(),b'old');self.assertEqual((base/'assets/portrait.png').read_bytes(),b'old')
+            with self.subTest(mode=mode):
+                base=self.root/('base-'+mode);fixture(base)
+                stage=self.root/('stage-'+mode);new=fixture(stage,'1.1.0',b'new')
+                # The updater canonicalizes endpoints before moving files. Use
+                # the same spelling even when Windows TEMP uses a short path.
+                move_source=stage.resolve()/'desktop.py'
+                injected=[]
+                def replace(source,target):
+                    if mode=='move' and Path(source)==move_source:
+                        injected.append(mode)
+                        raise OSError('controlled replacement failure')
+                    return os.replace(source,target)
+                def health(*_):
+                    if mode=='health':
+                        injected.append(mode)
+                        raise u.UpdateError('controlled startup failure')
+                with self.assertRaisesRegex(u.UpdateError,'已回退'):
+                    u.apply_transaction(base,stage,new,health_check=health,replace=replace)
+                self.assertEqual(injected,[mode],'The intended failure must be injected once')
+                u.validate_payload(base,'1.0.9',exact=False)
+                self.assertEqual((base/'desktop.py').read_bytes(),b'old')
+                self.assertEqual((base/'assets/portrait.png').read_bytes(),b'old')
 
     @unittest.skipUnless(os.name=='nt','Windows lock semantics')
     def test_windows_locked_runtime_refuses_swap_then_succeeds_after_exit(self):
